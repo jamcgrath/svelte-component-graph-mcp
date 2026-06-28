@@ -86,8 +86,8 @@ server.registerTool(
         description:
             'Look up a single component or route by its workspace-relative path (e.g. ' +
             '"src/lib/Button.svelte"). Returns its parents (components that import it), children ' +
-            '(components it imports), whether it is unused/a route, and its public API surface: ' +
-            'props (name, optional, bindable, rest), slots, and dispatched events.',
+            '(components it imports), whether it is unused/a route, and its Svelte 5 public API ' +
+            'surface: props (name, optional, bindable, rest) and slots.',
         inputSchema: {
             ...rootSchema,
             path: z
@@ -118,8 +118,7 @@ server.registerTool(
             parents: parentsOf(graph, id),
             children: childrenOf(graph, id),
             props: detail.props,
-            slots: detail.slots,
-            events: detail.events
+            slots: detail.slots
         });
     }
 );

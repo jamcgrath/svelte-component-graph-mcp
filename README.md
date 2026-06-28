@@ -100,19 +100,18 @@ Details for one component/route, including its public API surface. `path` is wor
   "isRoute": false,
   "parents": ["src/routes/+page.svelte"],   // components that import it
   "children": [],                            // components it imports
-  "props": [                                  // $props() (runes) or `export let` (legacy)
+  "props": [                                  // from $props()
     { "name": "size",  "optional": true,  "bindable": false },
     { "name": "open",  "optional": true,  "bindable": true },
     { "name": "title", "optional": false, "bindable": false },
     { "name": "rest",  "optional": true,  "bindable": false, "rest": true }
   ],
-  "slots": ["default", "footer"],            // <slot> / <slot name="…">
-  "events": []                                // legacy createEventDispatcher names
+  "slots": ["default", "footer"]             // <slot> / <slot name="…">
 }
 ```
 
-Props cover Svelte 5 runes (`$props()`, `$bindable()`, `...rest`) and legacy `export let`. Runes
-components express events as callback props, so those appear in `props` rather than `events`.
+Props come from Svelte 5 runes (`$props()`, `$bindable()`, `...rest`). Events are not a separate
+concept in Svelte 5 — they are ordinary callback props, so they appear in `props`.
 
 ### `get_unused(root)`
 Every component imported somewhere but never used in the importing file's template.

@@ -162,83 +162,68 @@ export interface PropInfo {
     rest?: boolean;
 }
 
-/** A component's public surface: props it accepts, slots it exposes, events it dispatches. */
+/** A component's public surface: props it accepts and slots it exposes. */
 export interface ComponentDetail {
     props: PropInfo[];
     slots: string[];
-    events: string[];
 }
 
 /**
  * The setting-independent result of parsing one file: which local names map to which child node
  * ids, which of those locals are referenced in the template, and the component's public API surface
- * (props/slots/events). The unconditional/unused decision is intentionally NOT cached here — it
- * depends on the unconditionalDependencyPaths option, which can change without the file's mtime
- * changing, so it is applied fresh at graph-assembly time.
+ * (props/slots). The unconditional/unused decision is intentionally NOT cached here — it depends on
+ * the unconditionalDependencyPaths option, which can change without the file's mtime changing, so it
+ * is applied fresh at graph-assembly time.
  */
 interface ParseResult {
     importsByLocal: Record<string, string>;
     usedLocals: Set<string>;
     props: PropInfo[];
     slots: string[];
-    events: string[];
 }
 
 function emptyParseResult(): ParseResult {
-    return { importsByLocal: {}, usedLocals: new Set(), props: [], slots: [], events: [] };
+    return { importsByLocal: {}, usedLocals: new Set(), props: [], slots: [] };
 }
 
 /**
- * Extract a component's public API from its parsed AST: props (Svelte 5 `$props()` destructuring
- * and legacy `export let`), slots (`<slot>` / `<slot name="x">`), and dispatched events (legacy
- * `createEventDispatcher`). Runes components express events as callback props, so they surface in
- * `props` rather than `events` — that is expected.
+ * Extract a component's public API (Svelte 5) from its parsed AST: props from the `$props()`
+ * destructuring, and slots from `<slot>` / `<slot name="x">`. Events are not a distinct concept in
+ * Svelte 5 — they are ordinary callback props, so they surface under `props`.
  */
 function extractDetail(ast: any): ComponentDetail {
     const props: PropInfo[] = [];
     const slots: string[] = [];
-    const events: string[] = [];
     const instanceBody: any[] = ast.instance?.content?.body ?? [];
 
+    // Props: `let { a, b = 1, c = $bindable(), ...rest } = $props()`.
     for (const node of instanceBody) {
-        // Legacy props: `export let foo` / `export let foo = default` (export const is read-only).
-        if (
-            node.type === 'ExportNamedDeclaration' &&
-            node.declaration?.type === 'VariableDeclaration' &&
-            (node.declaration.kind === 'let' || node.declaration.kind === 'var')
-        ) {
-            for (const decl of node.declaration.declarations) {
-                if (decl.id?.type === 'Identifier') {
-                    props.push({ name: decl.id.name, optional: decl.init != null, bindable: false });
-                }
-            }
+        if (node.type !== 'VariableDeclaration') {
+            continue;
         }
-        // Runes props: `let { a, b = 1, c = $bindable(), ...rest } = $props()`.
-        if (node.type === 'VariableDeclaration') {
-            for (const decl of node.declarations) {
-                if (
-                    decl.init?.type === 'CallExpression' &&
-                    decl.init.callee?.name === '$props' &&
-                    decl.id?.type === 'ObjectPattern'
-                ) {
-                    for (const p of decl.id.properties) {
-                        if (p.type === 'Property') {
-                            const hasDefault = p.value?.type === 'AssignmentPattern';
-                            const bindable =
-                                hasDefault &&
-                                p.value.right?.type === 'CallExpression' &&
-                                p.value.right.callee?.name === '$bindable';
-                            props.push({ name: p.key.name, optional: hasDefault, bindable });
-                        } else if (p.type === 'RestElement' && p.argument?.type === 'Identifier') {
-                            props.push({ name: p.argument.name, optional: true, bindable: false, rest: true });
-                        }
+        for (const decl of node.declarations) {
+            if (
+                decl.init?.type === 'CallExpression' &&
+                decl.init.callee?.name === '$props' &&
+                decl.id?.type === 'ObjectPattern'
+            ) {
+                for (const p of decl.id.properties) {
+                    if (p.type === 'Property') {
+                        const hasDefault = p.value?.type === 'AssignmentPattern';
+                        const bindable =
+                            hasDefault &&
+                            p.value.right?.type === 'CallExpression' &&
+                            p.value.right.callee?.name === '$bindable';
+                        props.push({ name: p.key.name, optional: hasDefault, bindable });
+                    } else if (p.type === 'RestElement' && p.argument?.type === 'Identifier') {
+                        props.push({ name: p.argument.name, optional: true, bindable: false, rest: true });
                     }
                 }
             }
         }
     }
 
-    // Slots (legacy markup; runes use snippet/children props, already captured above).
+    // Slots: <slot> / <slot name="x"> in the template.
     if (ast.html) {
         walk(ast.html as any, {
             enter(node: any) {
@@ -253,39 +238,7 @@ function extractDetail(ast: any): ComponentDetail {
         });
     }
 
-    // Events: legacy `const dispatch = createEventDispatcher()` then `dispatch('name', …)`.
-    let dispatcherName: string | undefined;
-    for (const node of instanceBody) {
-        if (node.type === 'VariableDeclaration') {
-            for (const decl of node.declarations) {
-                if (
-                    decl.init?.type === 'CallExpression' &&
-                    decl.init.callee?.name === 'createEventDispatcher' &&
-                    decl.id?.type === 'Identifier'
-                ) {
-                    dispatcherName = decl.id.name;
-                }
-            }
-        }
-    }
-    if (dispatcherName && ast.instance) {
-        walk(ast.instance as any, {
-            enter(node: any) {
-                if (
-                    node.type === 'CallExpression' &&
-                    node.callee?.type === 'Identifier' &&
-                    node.callee.name === dispatcherName
-                ) {
-                    const arg = node.arguments?.[0];
-                    if (arg?.type === 'Literal' && typeof arg.value === 'string' && !events.includes(arg.value)) {
-                        events.push(arg.value);
-                    }
-                }
-            }
-        });
-    }
-
-    return { props, slots, events };
+    return { props, slots };
 }
 
 const parseCache = new Map<string, { mtimeMs: number; size: number; parsed: ParseResult }>();
@@ -352,11 +305,10 @@ function parseSvelteFile(file: string, workspaceRoot: string): ParseResult {
             }
         });
 
-        // Component API surface (props/slots/events) for the get_component tool.
+        // Component API surface (props/slots) for the get_component tool.
         const detail = extractDetail(ast);
         result.props = detail.props;
         result.slots = detail.slots;
-        result.events = detail.events;
     } catch (e) {
         console.error(`Could not parse ${file}: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -367,7 +319,6 @@ function parseSvelteFile(file: string, workspaceRoot: string): ParseResult {
     Object.freeze(result.importsByLocal);
     Object.freeze(result.props);
     Object.freeze(result.slots);
-    Object.freeze(result.events);
     return result;
 }
 
@@ -405,8 +356,8 @@ function getParsedFile(file: string, workspaceRoot: string): ParseResult {
  * yield an empty detail.
  */
 export function getComponentDetail(absPath: string, workspaceRoot: string): ComponentDetail {
-    const { props, slots, events } = getParsedFile(absPath, workspaceRoot);
-    return { props, slots, events };
+    const { props, slots } = getParsedFile(absPath, workspaceRoot);
+    return { props, slots };
 }
 
 /**
