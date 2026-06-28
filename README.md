@@ -168,6 +168,10 @@ Force a full re-parse (bypassing all caches) and return the resulting size.
   nodes rather than resolved to a file.
 - `<svelte:component this={…}>` is resolved only when `this` is a plain imported identifier; dynamic
   expressions (member access, conditionals) are not traced.
+- `componentPaths` / `routePaths` accept negation globs (`!**/*.stories.svelte`) to exclude files: a
+  file is included when it matches a positive pattern and no negation pattern.
+- `props` are read from the `$props()` object destructuring. A non-destructured binding
+  (`let props = $props()`) has no statically-known prop names, so `props` comes back empty for it.
 
 ## License
 

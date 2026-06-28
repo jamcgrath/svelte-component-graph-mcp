@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { getGraph, rescan } from './cache.js';
-import { getComponentDetail, walkSvelteFiles, type GraphData, type GraphNode } from './parser.js';
+import { getComponentDetail, hasSvelteFile, toNodeId, type GraphData, type GraphNode } from './parser.js';
 
 const NAME = 'svelte-component-visualizer-mcp';
 const VERSION = '0.1.0';
@@ -37,7 +37,7 @@ function validateRoot(root: string): string | null {
     if (!stat.isDirectory()) {
         return `Error: root is not a directory: ${root}`;
     }
-    if (walkSvelteFiles(root).length === 0) {
+    if (!hasSvelteFile(root)) {
         return `Error: no .svelte files found under root: ${root}`;
     }
     return null;
@@ -45,15 +45,23 @@ function validateRoot(root: string): string | null {
 
 /** Normalize a (possibly absolute) workspace-relative path param into a canonical node id. */
 function toComponentId(root: string, p: string): string {
-    const rel = path.isAbsolute(p) ? path.relative(root, p) : p;
-    return rel.replace(/\\/g, '/').replace(/^\.\//, '');
+    // Reuse the canonical id producer for the absolute case so there is one source of truth for the
+    // id format; for a relative path just normalize separators and strip a leading "./".
+    return path.isAbsolute(p)
+        ? toNodeId(p, root)
+        : p.replace(/\\/g, '/').replace(/^\.\//, '');
 }
 
-const parentsOf = (graph: GraphData, id: string): string[] =>
-    graph.links.filter(l => l.target === id).map(l => l.source);
-
-const childrenOf = (graph: GraphData, id: string): string[] =>
-    graph.links.filter(l => l.source === id).map(l => l.target);
+/** Build source→children and target→parents adjacency once, for O(1) neighbour lookups. */
+function adjacency(graph: GraphData): { parents: Map<string, string[]>; children: Map<string, string[]> } {
+    const parents = new Map<string, string[]>();
+    const children = new Map<string, string[]>();
+    for (const { source, target } of graph.links) {
+        (children.get(source) ?? children.set(source, []).get(source)!).push(target);
+        (parents.get(target) ?? parents.set(target, []).get(target)!).push(source);
+    }
+    return { parents, children };
+}
 
 // --- server --------------------------------------------------------------------------------------
 
@@ -108,6 +116,7 @@ server.registerTool(
                     `Pass a workspace-relative path such as "src/lib/Button.svelte".`
             );
         }
+        const { parents, children } = adjacency(graph);
         const detail = getComponentDetail(path.join(root, ...id.split('/')), root);
         return ok({
             id: node.id,
@@ -115,8 +124,8 @@ server.registerTool(
             type: node.type,
             unused: node.unused === true,
             isRoute: node.type === 'route',
-            parents: parentsOf(graph, id),
-            children: childrenOf(graph, id),
+            parents: parents.get(id) ?? [],
+            children: children.get(id) ?? [],
             props: detail.props,
             slots: detail.slots
         });
@@ -128,8 +137,9 @@ server.registerTool(
     {
         title: 'Get unused components',
         description:
-            'Return every component that is imported somewhere but never referenced in the importing ' +
-            "file's template (the graph's `unused` nodes).",
+            'Return every component that is imported somewhere in the project but rendered nowhere ' +
+            "(never referenced in any importer's template). Computed globally, so the result does not " +
+            'depend on file order.',
         inputSchema: rootSchema
     },
     async ({ root }) => {
@@ -153,12 +163,13 @@ server.registerTool(
         const error = validateRoot(root);
         if (error) return fail(error);
         const graph = getGraph(root);
+        const { children } = adjacency(graph);
         const routes = graph.nodes
             .filter((n: GraphNode) => n.type === 'route')
             .map((n: GraphNode) => ({
                 id: n.id,
                 label: n.label,
-                children: childrenOf(graph, n.id)
+                children: children.get(n.id) ?? []
             }));
         return ok(routes);
     }

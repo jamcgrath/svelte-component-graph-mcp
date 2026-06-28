@@ -1,51 +1,67 @@
-import * as fs from 'fs';
 import {
-    generateComponentGraph,
+    assembleGraph,
     invalidateParseCache,
-    toNodeId,
-    walkSvelteFiles,
+    scanProject,
     type GraphData,
     type ParserOptions
 } from './parser.js';
 
 /**
  * Graph-level cache, keyed by absolute root path. Sits *on top* of the parser's per-file mtime+size
- * cache: when nothing under a root has changed, we return the stored graph without even reassembling
- * it. When something has changed, the parser's own cache ensures only the changed files re-parse.
+ * cache: each call does ONE filesystem scan (walk + stat of the included files), compares the
+ * resulting stamps to what was cached, and returns the stored graph untouched when nothing changed.
+ * On a change it reassembles — and the parser's own cache re-parses only the files that actually moved.
  *
- * The mtime map is keyed by each file's workspace-relative id and stores a "<mtimeMs>:<size>" stamp,
+ * The stamp map is keyed by each file's workspace-relative id and stores a "<mtimeMs>:<size>" stamp,
  * so staleness detection catches added, removed, and modified files alike.
  */
 interface CacheEntry {
     graph: GraphData;
-    mtimes: Map<string, string>;
+    stamps: Map<string, string>;
 }
 
 const cache = new Map<string, CacheEntry>();
 
-function stamp(stat: fs.Stats): string {
-    return `${stat.mtimeMs}:${stat.size}`;
-}
+// Bound the number of cached roots so a long-lived server queried against many projects/worktrees
+// can't grow unbounded. Map keeps insertion order; we re-insert on access for LRU eviction.
+const MAX_CACHED_ROOTS = 32;
 
-/** Build the current id → "<mtimeMs>:<size>" map for every `.svelte` file under `root`. */
-function currentMtimes(root: string): Map<string, string> {
-    const map = new Map<string, string>();
-    for (const file of walkSvelteFiles(root)) {
-        try {
-            map.set(toNodeId(file, root), stamp(fs.statSync(file)));
-        } catch {
-            // File vanished between walk and stat — treat as absent (omit from the map).
+function stampsEqual(a: Map<string, string>, b: Map<string, string>): boolean {
+    if (a.size !== b.size) {
+        return false;
+    }
+    for (const [id, s] of a) {
+        if (b.get(id) !== s) {
+            return false;
         }
     }
-    return map;
+    return true;
+}
+
+/**
+ * Freeze a graph before caching so a value handed to a tool can't be mutated in place (sort/splice/
+ * push on nodes or links) and silently poison every later cache hit.
+ */
+function freezeGraph(graph: GraphData): GraphData {
+    Object.freeze(graph.nodes);
+    Object.freeze(graph.links);
+    return Object.freeze(graph);
+}
+
+/** Insert (or refresh) a root at the most-recently-used position, evicting the oldest over the cap. */
+function store(root: string, entry: CacheEntry): void {
+    cache.delete(root);
+    cache.set(root, entry);
+    if (cache.size > MAX_CACHED_ROOTS) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) {
+            cache.delete(oldest);
+        }
+    }
 }
 
 export function get(root: string): GraphData | undefined {
     return cache.get(root)?.graph;
-}
-
-export function set(root: string, graph: GraphData, mtimes: Map<string, string>): void {
-    cache.set(root, { graph, mtimes });
 }
 
 export function invalidate(root: string): void {
@@ -54,48 +70,42 @@ export function invalidate(root: string): void {
 
 /**
  * True when the cached graph for `root` no longer reflects the filesystem: no entry, a file added or
- * removed, or any file's mtime/size changed since it was cached.
+ * removed, or any included file's mtime/size changed since it was cached.
  */
-export function isStale(root: string): boolean {
+export function isStale(root: string, options: ParserOptions = {}): boolean {
     const entry = cache.get(root);
     if (!entry) {
         return true;
     }
-    const current = currentMtimes(root);
-    if (current.size !== entry.mtimes.size) {
-        return true; // file added or removed
-    }
-    for (const [id, currentStamp] of current) {
-        if (entry.mtimes.get(id) !== currentStamp) {
-            return true; // modified, or a same-count add+remove swap
-        }
-    }
-    return false;
+    return !stampsEqual(entry.stamps, scanProject(root, options).stamps);
 }
 
 /**
- * Return the graph for `root`, served from cache when nothing has changed. On a miss or when stale,
- * regenerate (the parser re-parses only the files whose mtime/size moved) and re-cache.
+ * Return the graph for `root`, served from cache when nothing changed. One filesystem scan per call;
+ * on a change, reassemble (the parser re-parses only the files whose stamp moved) and re-cache.
  */
 export function getGraph(root: string, options: ParserOptions = {}): GraphData {
-    if (!isStale(root)) {
-        return cache.get(root)!.graph;
+    const scan = scanProject(root, options);
+    const entry = cache.get(root);
+    if (entry && stampsEqual(entry.stamps, scan.stamps)) {
+        store(root, entry); // LRU touch
+        return entry.graph;
     }
-    const graph = generateComponentGraph(root, options);
-    set(root, graph, currentMtimes(root));
+    const graph = freezeGraph(assembleGraph(root, options, scan));
+    store(root, { graph, stamps: scan.stamps });
     return graph;
 }
 
 /**
- * Force a full re-parse of `root`: drop the cached graph AND every per-file parse entry under it, so
- * nothing is served from either cache layer, then regenerate from scratch and re-cache.
+ * Force a full re-parse of `root`: drop every per-file parse entry for the scanned files so nothing
+ * is served from the parser cache, then reassemble from scratch and re-cache.
  */
 export function rescan(root: string, options: ParserOptions = {}): GraphData {
-    invalidate(root);
-    for (const file of walkSvelteFiles(root)) {
-        invalidateParseCache(file);
+    const scan = scanProject(root, options);
+    for (const entry of scan.entries) {
+        invalidateParseCache(entry.file);
     }
-    const graph = generateComponentGraph(root, options);
-    set(root, graph, currentMtimes(root));
+    const graph = freezeGraph(assembleGraph(root, options, scan));
+    store(root, { graph, stamps: scan.stamps });
     return graph;
 }

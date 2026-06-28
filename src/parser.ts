@@ -91,9 +91,11 @@ function resolveImportId(specifier: string, importingFileAbs: string, workspaceR
  */
 export function getNodeType(file: string, routesBasePath: string): 'component' | 'route' {
     // Plain substring test (not a RegExp) so a routesBasePath containing regex
-    // metacharacters can never throw or alter matching.
+    // metacharacters can never throw or alter matching. Match the base after a slash OR at the
+    // very start of the path (mirrors deriveRouteLabel), so a relative id like
+    // `routes/+page.svelte` is still recognized as a route.
     const normalizedFile = file.replace(/\\/g, '/');
-    if (normalizedFile.includes(`/${routesBasePath}/`)) {
+    if (normalizedFile.includes(`/${routesBasePath}/`) || normalizedFile.startsWith(`${routesBasePath}/`)) {
         const fileName = path.basename(file);
         if (fileName.startsWith('+page') || fileName.startsWith('+layout') || fileName.startsWith('+error')) {
             return 'route';
@@ -142,8 +144,12 @@ function deriveRouteLabel(id: string, base: string): string {
     else if (fileName.startsWith('+layout')) fileType = '(layout)';
     else if (fileName.startsWith('+error')) fileType = '(error)';
     const dir = posixDirname(afterBase);
-    // Root route (posixDirname returns '.') renders as '/'; nested routes get a leading slash.
-    return `${fileType} ${dir && dir !== '.' ? '/' + dir : '/'}`;
+    // Build the real URL path: drop SvelteKit route-group folders like `(auth)` (they don't appear
+    // in the URL). Dynamic segments (`[slug]`, `[...rest]`) are kept. Root renders as '/'.
+    const segments = (dir === '.' ? '' : dir)
+        .split('/')
+        .filter(seg => seg && !(seg.startsWith('(') && seg.endsWith(')')));
+    return `${fileType} ${segments.length ? '/' + segments.join('/') : '/'}`;
 }
 
 /** The display label for a node: derived route string for routes, basename for components. */
@@ -209,12 +215,24 @@ function extractDetail(ast: any): ComponentDetail {
             ) {
                 for (const p of decl.id.properties) {
                     if (p.type === 'Property') {
+                        // A computed key (`{ [k]: v }`) can't be named statically; a quoted key
+                        // (`{ "data-x": v }`) is a Literal, not an Identifier.
+                        if (p.computed) {
+                            continue;
+                        }
+                        const name =
+                            p.key?.type === 'Identifier' ? p.key.name
+                            : p.key?.type === 'Literal' ? String(p.key.value)
+                            : undefined;
+                        if (!name) {
+                            continue;
+                        }
                         const hasDefault = p.value?.type === 'AssignmentPattern';
                         const bindable =
                             hasDefault &&
                             p.value.right?.type === 'CallExpression' &&
                             p.value.right.callee?.name === '$bindable';
-                        props.push({ name: p.key.name, optional: hasDefault, bindable });
+                        props.push({ name, optional: hasDefault, bindable });
                     } else if (p.type === 'RestElement' && p.argument?.type === 'Identifier') {
                         props.push({ name: p.argument.name, optional: true, bindable: false, rest: true });
                     }
@@ -242,6 +260,11 @@ function extractDetail(ast: any): ComponentDetail {
 }
 
 const parseCache = new Map<string, { mtimeMs: number; size: number; parsed: ParseResult }>();
+
+// Bound the per-file parse cache so a long-lived server processing many files (branch switches,
+// many worktrees) can't grow it without limit. Map preserves insertion order, so evicting the first
+// key drops the least-recently-inserted entry (entries are re-inserted on refresh, keeping them warm).
+const MAX_PARSE_CACHE_ENTRIES = 5000;
 
 // Cache keys are normalized to POSIX separators so the walk-produced paths used when populating the
 // cache and any path used to invalidate it match on Windows too.
@@ -274,8 +297,16 @@ function parseSvelteFile(file: string, workspaceRoot: string): ParseResult {
                     node.type === 'ImportDeclaration' &&
                     node.source?.value?.endsWith('.svelte')
                 ) {
+                    // Skip type-only imports (`import type Foo from './Foo.svelte'`) — they create no
+                    // runtime dependency, so counting them produces a phantom edge + spurious "unused".
+                    if (node.importKind === 'type') {
+                        return;
+                    }
                     const childId = resolveImportId(node.source.value, file, workspaceRoot);
                     for (const specifier of node.specifiers || []) {
+                        if (specifier.importKind === 'type') {
+                            continue; // inline `import { type Foo }`
+                        }
                         if (specifier.local?.name) {
                             result.importsByLocal[specifier.local.name] = childId;
                         }
@@ -325,17 +356,27 @@ function parseSvelteFile(file: string, workspaceRoot: string): ParseResult {
 /**
  * Cache-aware parse: re-reads a file only when its mtime OR size has changed since the last
  * parse. Size is a cheap second signal that catches content changes which preserve mtime
- * (e.g. a `git checkout` that restores a stale timestamp).
+ * (e.g. a `git checkout` that restores a stale timestamp). Pass `known` when the caller has already
+ * stat'd the file (graph assembly) to avoid a redundant `statSync`.
  */
-function getParsedFile(file: string, workspaceRoot: string): ParseResult {
+function getParsedFile(
+    file: string,
+    workspaceRoot: string,
+    known?: { mtimeMs: number; size: number }
+): ParseResult {
     let mtimeMs: number;
     let size: number;
-    try {
-        const stat = fs.statSync(file);
-        mtimeMs = stat.mtimeMs;
-        size = stat.size;
-    } catch {
-        return emptyParseResult();
+    if (known) {
+        mtimeMs = known.mtimeMs;
+        size = known.size;
+    } else {
+        try {
+            const stat = fs.statSync(file);
+            mtimeMs = stat.mtimeMs;
+            size = stat.size;
+        } catch {
+            return emptyParseResult();
+        }
     }
 
     const key = cacheKey(file);
@@ -346,14 +387,19 @@ function getParsedFile(file: string, workspaceRoot: string): ParseResult {
 
     const parsed = parseSvelteFile(file, workspaceRoot);
     parseCache.set(key, { mtimeMs, size, parsed });
+    if (parseCache.size > MAX_PARSE_CACHE_ENTRIES) {
+        const oldest = parseCache.keys().next().value;
+        if (oldest !== undefined) {
+            parseCache.delete(oldest);
+        }
+    }
     return parsed;
 }
 
 /**
- * The public API surface (props/slots/events) of a single component file. Reads through the same
- * per-file mtime+size cache as graph assembly, so after a `generateComponentGraph` run this is a
- * cache hit; for a file outside the scan (or a cold cache) it parses on demand. Missing files
- * yield an empty detail.
+ * The public API surface (props/slots) of a single component file. Reads through the same per-file
+ * mtime+size cache as graph assembly, so after a graph build this is a cache hit; for a file outside
+ * the scan (or a cold cache) it parses on demand. Missing files yield an empty detail.
  */
 export function getComponentDetail(absPath: string, workspaceRoot: string): ComponentDetail {
     const { props, slots } = getParsedFile(absPath, workspaceRoot);
@@ -361,14 +407,26 @@ export function getComponentDetail(absPath: string, workspaceRoot: string): Comp
 }
 
 /**
- * Recursively collect every `.svelte` file under `root` (absolute paths), skipping the ignore dirs.
- * Replaces the extension's `glob()` scan; the cache reuses this to enumerate the current file set.
+ * Visit every `.svelte` file under `root` (symlink-aware, cycle-guarded), skipping the ignore dirs.
+ * The visitor may return `true` to stop the walk early. Directories are de-duplicated by real path so
+ * a symlink cycle can't loop forever and a dir reached two ways isn't scanned twice.
  */
-export function walkSvelteFiles(root: string): string[] {
-    const found: string[] = [];
+function forEachSvelteFile(root: string, visit: (file: string) => boolean | void): void {
     const stack: string[] = [root];
+    const seenDirs = new Set<string>();
     while (stack.length > 0) {
         const dir = stack.pop()!;
+        let real: string;
+        try {
+            real = fs.realpathSync(dir);
+        } catch {
+            continue; // dangling/unreadable
+        }
+        if (seenDirs.has(real)) {
+            continue;
+        }
+        seenDirs.add(real);
+
         let entries: fs.Dirent[];
         try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -377,16 +435,164 @@ export function walkSvelteFiles(root: string): string[] {
         }
         for (const entry of entries) {
             const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
+            let isDir = entry.isDirectory();
+            let isFile = entry.isFile();
+            if (entry.isSymbolicLink()) {
+                // withFileTypes reports a symlink's own type, not its target's — resolve it so
+                // symlinked dirs/files (common in pnpm/monorepo setups) are not silently skipped.
+                try {
+                    const st = fs.statSync(full);
+                    isDir = st.isDirectory();
+                    isFile = st.isFile();
+                } catch {
+                    continue; // dangling symlink
+                }
+            }
+            if (isDir) {
                 if (!IGNORED_DIRS.has(entry.name)) {
                     stack.push(full);
                 }
-            } else if (entry.isFile() && entry.name.endsWith('.svelte')) {
-                found.push(full);
+            } else if (isFile && entry.name.endsWith('.svelte')) {
+                if (visit(full) === true) {
+                    return;
+                }
             }
         }
     }
+}
+
+/**
+ * Every `.svelte` file under `root` (absolute paths), sorted for deterministic, reproducible output.
+ */
+export function walkSvelteFiles(root: string): string[] {
+    const found: string[] = [];
+    forEachSvelteFile(root, file => {
+        found.push(file);
+    });
+    found.sort();
     return found;
+}
+
+/** Cheap existence check: true if `root` contains at least one `.svelte` file (stops at the first). */
+export function hasSvelteFile(root: string): boolean {
+    let any = false;
+    forEachSvelteFile(root, () => {
+        any = true;
+        return true; // stop early
+    });
+    return any;
+}
+
+/** A `.svelte` file selected for the graph, with the stat used both for the cache key and staleness. */
+export interface ScanEntry {
+    file: string; // absolute path
+    id: string; // canonical node id
+    mtimeMs: number;
+    size: number;
+}
+
+/** Result of scanning a project: parse-ready entries plus an id→stamp map for cache staleness. */
+export interface ProjectScan {
+    entries: ScanEntry[];
+    stamps: Map<string, string>; // id → "<mtimeMs>:<size>"
+}
+
+/**
+ * Build the include predicate from the configured globs. A file is included when it matches at least
+ * one positive pattern AND no negation pattern (`!…`). The previous `.some()` over a flat matcher list
+ * could never subtract, so documented exclusion globs were silently ignored.
+ */
+function includePredicate(componentPatterns: string[], routePatterns: string[]): (id: string) => boolean {
+    const all = [...componentPatterns, ...routePatterns];
+    const positives = all.filter(p => !p.startsWith('!')).map(p => new Minimatch(p));
+    const negatives = all.filter(p => p.startsWith('!')).map(p => new Minimatch(p.slice(1)));
+    return (id: string) => positives.some(m => m.match(id)) && !negatives.some(m => m.match(id));
+}
+
+/**
+ * Walk `root` once, keep only the `.svelte` files the include/exclude globs select, and stat each
+ * exactly once. Only the INCLUDED files are stamped, so editing a `.svelte` file the globs exclude
+ * never spuriously invalidates the graph cache.
+ */
+export function scanProject(root: string, options: ParserOptions = {}): ProjectScan {
+    const componentPatterns = options.componentPaths ?? DEFAULT_COMPONENT_PATHS;
+    const routePatterns = options.routePaths ?? DEFAULT_ROUTE_PATHS;
+    const included = includePredicate(componentPatterns, routePatterns);
+
+    const entries: ScanEntry[] = [];
+    const stamps = new Map<string, string>();
+    for (const file of walkSvelteFiles(root)) {
+        const id = toNodeId(file, root);
+        if (!included(id)) {
+            continue;
+        }
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(file);
+        } catch {
+            continue; // vanished between walk and stat
+        }
+        entries.push({ file, id, mtimeMs: stat.mtimeMs, size: stat.size });
+        stamps.set(id, `${stat.mtimeMs}:${stat.size}`);
+    }
+    return { entries, stamps };
+}
+
+/**
+ * Assemble the dependency graph from a project scan. Parses each included file (through the per-file
+ * cache, reusing the scan's stat), then builds nodes and links. The `unused` flag is computed
+ * GLOBALLY — a component is unused only if it is imported somewhere and rendered nowhere — so the
+ * result never depends on file-traversal order.
+ */
+export function assembleGraph(root: string, options: ParserOptions, scan: ProjectScan): GraphData {
+    const routesBasePath = options.routesBasePath ?? DEFAULT_ROUTES_BASE_PATH;
+    const unconditionalMatchers = (options.unconditionalDependencyPaths ?? []).map(p => new Minimatch(p));
+
+    const allNodes = new Map<string, GraphNode>();
+    const links: GraphLink[] = [];
+    const linkSet = new Set<string>(); // dedupes a file importing the same child under two bindings
+    const importedChildren = new Set<string>(); // every id that is the target of some import
+    const usedChildren = new Set<string>(); // ids actually rendered by at least one importer
+
+    // Pass 1: authoritative node for every scanned file (correct type + label), plus edges/usage.
+    for (const { file, id, mtimeMs, size } of scan.entries) {
+        const type = getNodeType(file, routesBasePath);
+        allNodes.set(id, { id, label: baseLabel(id, type, routesBasePath), type });
+
+        const { importsByLocal, usedLocals } = getParsedFile(file, root, { mtimeMs, size });
+        const isUnconditional = unconditionalMatchers.some(m => m.match(id));
+
+        for (const [local, childId] of Object.entries(importsByLocal)) {
+            if (childId === id) {
+                continue; // ignore self-import
+            }
+            importedChildren.add(childId);
+            if (isUnconditional || usedLocals.has(local)) {
+                usedChildren.add(childId);
+            }
+            const key = `${id}\t${childId}`;
+            if (!linkSet.has(key)) {
+                linkSet.add(key);
+                links.push({ source: id, target: childId });
+            }
+        }
+    }
+
+    // Pass 2: leaf nodes for imported children never scanned (outside the include set / bare alias).
+    for (const childId of importedChildren) {
+        if (!allNodes.has(childId)) {
+            allNodes.set(childId, { id: childId, label: basename(childId), type: 'component' });
+        }
+    }
+
+    // Pass 3: imported somewhere but rendered nowhere → unused. Order-independent by construction.
+    for (const id of importedChildren) {
+        if (!usedChildren.has(id)) {
+            allNodes.get(id)!.unused = true;
+        }
+    }
+
+    return { nodes: Array.from(allNodes.values()), links };
 }
 
 /**
@@ -394,79 +600,5 @@ export function walkSvelteFiles(root: string): string[] {
  * Returns `GraphData` with workspace-relative path ids and display labels.
  */
 export function generateComponentGraph(root: string, options: ParserOptions = {}): GraphData {
-    const componentPatterns = options.componentPaths ?? DEFAULT_COMPONENT_PATHS;
-    const routePatterns = options.routePaths ?? DEFAULT_ROUTE_PATHS;
-    const routesBasePath = options.routesBasePath ?? DEFAULT_ROUTES_BASE_PATH;
-    const unconditionalDependencyPaths = options.unconditionalDependencyPaths ?? [];
-
-    // Compile the include + unconditional globs once. Includes are matched against each file's
-    // workspace-relative id (POSIX), the same form the extension's glob patterns assume.
-    const includeMatchers = [...componentPatterns, ...routePatterns].map(pattern => new Minimatch(pattern));
-    const unconditionalMatchers = unconditionalDependencyPaths.map(pattern => new Minimatch(pattern));
-
-    const svelteFiles = walkSvelteFiles(root).filter(file => {
-        const nodeId = toNodeId(file, root);
-        return includeMatchers.some(matcher => matcher.match(nodeId));
-    });
-
-    const dependencyMap: Record<string, Set<string>> = {};
-    const allNodes = new Map<string, GraphNode>();
-
-    for (const file of svelteFiles) {
-        const nodeId = toNodeId(file, root);
-        const nodeType = getNodeType(file, routesBasePath);
-
-        if (!allNodes.has(nodeId)) {
-            allNodes.set(nodeId, { id: nodeId, label: baseLabel(nodeId, nodeType, routesBasePath), type: nodeType });
-        }
-        dependencyMap[nodeId] = new Set();
-
-        const { importsByLocal, usedLocals } = getParsedFile(file, root);
-
-        // Files matching a configured glob treat all their .svelte imports as dependencies,
-        // regardless of template usage (e.g. dynamic renderers that resolve children at runtime).
-        const isUnconditional = unconditionalMatchers.some(matcher => matcher.match(nodeId));
-
-        const addChild = (childName: string, unused: boolean) => {
-            if (childName === nodeId) {
-                return; // Avoid self-reference
-            }
-            dependencyMap[nodeId].add(childName);
-            if (!allNodes.has(childName)) {
-                // Imported children are always components (a leaf node when outside the scan set).
-                const node: GraphNode = { id: childName, label: basename(childName), type: 'component' };
-                if (unused) {
-                    node.unused = true;
-                }
-                allNodes.set(childName, node);
-            }
-        };
-
-        // Classify each import; add the used/unconditional ones first so a child that is used
-        // under one binding is never demoted to "unused" by another binding of the same file.
-        const unusedChildren: string[] = [];
-        for (const [localName, childName] of Object.entries(importsByLocal)) {
-            if (isUnconditional || usedLocals.has(localName)) {
-                addChild(childName, false);
-            } else {
-                unusedChildren.push(childName);
-            }
-        }
-        for (const childName of unusedChildren) {
-            addChild(childName, true);
-        }
-    }
-
-    const graph: GraphData = {
-        nodes: Array.from(allNodes.values()),
-        links: []
-    };
-
-    for (const parent in dependencyMap) {
-        for (const child of dependencyMap[parent]) {
-            graph.links.push({ source: parent, target: child });
-        }
-    }
-
-    return graph;
+    return assembleGraph(root, options, scanProject(root, options));
 }
