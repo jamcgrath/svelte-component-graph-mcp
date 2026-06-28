@@ -27,37 +27,30 @@ changed files are re-parsed).
 
 ## Installation
 
-Run on demand with `npx` (no install):
+This is a **stdio MCP server** — your MCP client launches it; you don't run it by hand. Requires
+**Node.js ≥ 20**. Pick the path that matches your setup.
 
-```bash
-npx svelte-component-graph-mcp
-```
+### Claude Code — plugin (recommended)
 
-…or install globally:
-
-```bash
-npm install -g svelte-component-graph-mcp
-```
-
-Requires Node.js ≥ 20.
-
-## Install as a Claude Code plugin (recommended — server + skill in one)
-
-The quickest path for Claude Code: install the plugin, which registers the MCP server **and** the
-companion `/svelte-graph` skill in one step.
+Installs the MCP server **and** the companion `/svelte-graph` skill in one step:
 
 ```
 /plugin marketplace add jamcgrath/svelte-component-graph-mcp
 /plugin install svelte-component-graph@jamcgrath
 ```
 
-The server runs via `npx`, so there's nothing to clone or build. (The two steps can be combined as
-`/plugin install svelte-component-graph@jamcgrath/svelte-component-graph-mcp`.)
+Restart Claude Code afterward so the server connects. Nothing to clone or build — it runs via `npx`.
+(The two commands can be combined: `/plugin install svelte-component-graph@jamcgrath/svelte-component-graph-mcp`.)
 
-## Claude Code configuration (manual, server only)
+### Claude Code — server only (no skill)
 
-If you'd rather wire up just the MCP server yourself, add it to your MCP config (e.g. `.mcp.json` in a
-project, or your user-level config):
+```bash
+claude mcp add svelte-graph --scope user -- npx -y svelte-component-graph-mcp
+```
+
+### Other MCP clients (Claude Desktop, Cursor, Cline, …)
+
+Add it to the client's MCP config:
 
 ```json
 {
@@ -70,7 +63,16 @@ project, or your user-level config):
 }
 ```
 
-If you installed globally, use `"command": "svelte-component-graph-mcp"` with `"args": []`.
+(If you `npm install -g svelte-component-graph-mcp`, use `"command": "svelte-component-graph-mcp"` with
+`"args": []`.)
+
+### Quick test, no client
+
+Drive it with the MCP Inspector:
+
+```bash
+npx @modelcontextprotocol/inspector npx -y svelte-component-graph-mcp
+```
 
 ## The `root` argument
 
@@ -83,19 +85,20 @@ Guidance for the assistant when choosing `root`:
   pass `$PWD`.
 - Otherwise (e.g. a monorepo, or the cwd is a subfolder), pass the project's absolute path explicitly.
 
-## Companion skill (optional)
+## Companion skill
 
-A Claude Code skill ships in [`skills/svelte-graph/`](skills/svelte-graph/SKILL.md). It teaches the
-assistant *when* to reach for these tools (impact analysis, dead-code hunts, prop lookups) and how to
-resolve `root`. The MCP tools work without it; the skill just improves how readily they're used.
+A Claude Code skill ([`skills/svelte-graph/`](skills/svelte-graph/SKILL.md)) teaches the assistant
+*when* to reach for these tools (impact analysis, dead-code hunts, prop lookups) and how to resolve
+`root`. The MCP tools work without it; the skill just makes the assistant use them more readily.
 
-To install it, copy the folder into a skills directory:
+**If you installed the plugin, you already have it** — nothing to do. Otherwise, copy the folder into a
+skills directory:
 
 ```bash
-# project-level (this repo/project only)
-cp -r skills/svelte-graph .claude/skills/svelte-graph
-# or user-level (all your projects)
+# user-level (all your projects)
 cp -r skills/svelte-graph ~/.claude/skills/svelte-graph
+# or project-level (this repo only)
+cp -r skills/svelte-graph .claude/skills/svelte-graph
 ```
 
 Then invoke it with `/svelte-graph`, or let the assistant trigger it automatically.
