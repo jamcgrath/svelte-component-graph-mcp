@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "svelte-graph": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "svelte-component-graph-mcp"]
+    }
+  }
+}

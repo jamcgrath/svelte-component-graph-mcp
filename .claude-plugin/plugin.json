@@ -1,0 +1,13 @@
+{
+  "name": "svelte-component-graph",
+  "version": "0.1.0",
+  "description": "Query a Svelte/SvelteKit component dependency graph over MCP — what imports what, unused components, route→component maps, and a component's Svelte 5 props/slots. Bundles the MCP server and the /svelte-graph skill.",
+  "author": {
+    "name": "James McGrath",
+    "email": "jamcgrath@jamesmcgrath.net"
+  },
+  "homepage": "https://github.com/jamcgrath/svelte-component-graph-mcp",
+  "repository": "https://github.com/jamcgrath/svelte-component-graph-mcp",
+  "license": "MIT",
+  "keywords": ["svelte", "sveltekit", "mcp", "components", "dependencies", "graph"]
+}

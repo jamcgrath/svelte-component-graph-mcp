@@ -1,0 +1,23 @@
+{
+  "name": "jamcgrath",
+  "owner": {
+    "name": "James McGrath",
+    "email": "jamcgrath@jamesmcgrath.net"
+  },
+  "description": "James McGrath's Claude Code plugins.",
+  "plugins": [
+    {
+      "name": "svelte-component-graph",
+      "source": "./",
+      "description": "Query a Svelte/SvelteKit component dependency graph over MCP — dependencies, unused components, routes, and a component's Svelte 5 props/slots. Includes the /svelte-graph skill.",
+      "version": "0.1.0",
+      "author": {
+        "name": "James McGrath",
+        "email": "jamcgrath@jamesmcgrath.net"
+      },
+      "homepage": "https://github.com/jamcgrath/svelte-component-graph-mcp",
+      "license": "MIT",
+      "keywords": ["svelte", "sveltekit", "mcp", "components", "dependencies", "graph"]
+    }
+  ]
+}

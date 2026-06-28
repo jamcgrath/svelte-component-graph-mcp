@@ -41,9 +41,23 @@ npm install -g svelte-component-graph-mcp
 
 Requires Node.js ≥ 20.
 
-## Claude Code configuration
+## Install as a Claude Code plugin (recommended — server + skill in one)
 
-Add it to your MCP config (e.g. `.mcp.json` in a project, or your user-level config):
+The quickest path for Claude Code: install the plugin, which registers the MCP server **and** the
+companion `/svelte-graph` skill in one step.
+
+```
+/plugin marketplace add jamcgrath/svelte-component-graph-mcp
+/plugin install svelte-component-graph@jamcgrath
+```
+
+The server runs via `npx`, so there's nothing to clone or build. (The two steps can be combined as
+`/plugin install svelte-component-graph@jamcgrath/svelte-component-graph-mcp`.)
+
+## Claude Code configuration (manual, server only)
+
+If you'd rather wire up just the MCP server yourself, add it to your MCP config (e.g. `.mcp.json` in a
+project, or your user-level config):
 
 ```json
 {
