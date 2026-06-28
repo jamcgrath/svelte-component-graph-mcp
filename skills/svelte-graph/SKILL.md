@@ -2,7 +2,7 @@
 name: svelte-graph
 description: >-
   Explore a Svelte/SvelteKit project's component dependency graph via the
-  svelte-component-visualizer MCP — what imports what, which components are
+  svelte-component-graph MCP — what imports what, which components are
   unused, route→component maps, and a component's Svelte 5 props/slots. Use
   when asked to map components, do impact analysis before a refactor, find dead
   components, or look up how a component is used or what props it takes —
