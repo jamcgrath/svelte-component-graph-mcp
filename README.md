@@ -1,0 +1,146 @@
+# svelte-component-visualizer-mcp
+
+An [MCP](https://modelcontextprotocol.io) server that exposes a Svelte/SvelteKit project's
+**component dependency graph** over stdio, so an AI coding assistant can ask questions like
+_"what imports `Button.svelte`?"_, _"which components are unused?"_, or _"what does this route pull
+in?"_ without opening an editor.
+
+It is the command-line companion to the
+[Svelte Component Visualizer](https://marketplace.visualstudio.com/items?itemName=jamcgrath.svelte-component-visualizer)
+VS Code extension and uses the same analysis: the Svelte compiler's AST + `estree-walker` to track
+default **and** named `.svelte` imports, resolve static `<svelte:component this={Identifier}>` usage,
+and flag imported-but-unused components.
+
+## What it gives you
+
+A graph of every component and route in the project:
+
+- **Nodes** are keyed by **workspace-relative path** (`src/lib/Button.svelte`) — so two files that
+  share a name are never conflated — with a human-readable `label`, a `type` (`component` | `route`),
+  and an `unused` flag.
+- **Links** are import edges (`source` imports `target`).
+
+The server is **stateless across projects**: every tool takes a `root` argument, so one running
+server can answer questions about many projects (and many git worktrees) at once. Results are cached
+per root and refreshed automatically when files change (checked on each call by mtime + size; only
+changed files are re-parsed).
+
+## Installation
+
+Run on demand with `npx` (no install):
+
+```bash
+npx svelte-component-visualizer-mcp
+```
+
+…or install globally:
+
+```bash
+npm install -g svelte-component-visualizer-mcp
+```
+
+Requires Node.js ≥ 20.
+
+## Claude Code configuration
+
+Add it to your MCP config (e.g. `.mcp.json` in a project, or your user-level config):
+
+```json
+{
+  "mcpServers": {
+    "svelte-visualizer": {
+      "command": "npx",
+      "args": ["-y", "svelte-component-visualizer-mcp"]
+    }
+  }
+}
+```
+
+If you installed globally, use `"command": "svelte-component-visualizer-mcp"` with `"args": []`.
+
+## The `root` argument
+
+Every tool requires `root`: an **absolute path** to the project you want analyzed. The server
+validates that it exists, is a directory, and contains at least one `.svelte` file.
+
+Guidance for the assistant when choosing `root`:
+
+- If a `svelte.config.js` exists in the current working directory, the project root **is** the cwd —
+  pass `$PWD`.
+- Otherwise (e.g. a monorepo, or the cwd is a subfolder), pass the project's absolute path explicitly.
+
+## Tools
+
+### `get_graph(root)`
+The full graph.
+
+```jsonc
+{
+  "nodes": [
+    { "id": "src/routes/+page.svelte", "label": "(page) /", "type": "route" },
+    { "id": "src/lib/Button.svelte", "label": "Button", "type": "component" },
+    { "id": "src/lib/Unused.svelte", "label": "Unused", "type": "component", "unused": true }
+  ],
+  "links": [
+    { "source": "src/routes/+page.svelte", "target": "src/lib/Button.svelte" }
+  ]
+}
+```
+
+### `get_component(root, path)`
+Details for one component/route. `path` is workspace-relative (`src/lib/Button.svelte`).
+
+```jsonc
+{
+  "id": "src/lib/Button.svelte",
+  "label": "Button",
+  "type": "component",
+  "unused": false,
+  "isRoute": false,
+  "parents": ["src/routes/+page.svelte"],   // components that import it
+  "children": []                             // components it imports
+}
+```
+
+### `get_unused(root)`
+Every component imported somewhere but never used in the importing file's template.
+
+```jsonc
+[
+  { "id": "src/lib/Unused.svelte", "label": "Unused", "type": "component", "unused": true }
+]
+```
+
+### `get_routes(root)`
+Every route (`+page` / `+layout` / `+error`) with the components it directly pulls in.
+
+```jsonc
+[
+  {
+    "id": "src/routes/dashboard/+page.svelte",
+    "label": "(page) /dashboard",
+    "children": ["src/lib/Icon.svelte", "src/lib/components/Button.svelte"]
+  }
+]
+```
+
+### `scan(root)`
+Force a full re-parse (bypassing all caches) and return the resulting size.
+
+```jsonc
+{ "nodes": 7, "links": 5 }
+```
+
+## How resolution works (and its limits)
+
+- Relative imports (`./`, `../`) resolve against the importing file's directory.
+- SvelteKit's `$lib/…` resolves to the nearest `src/lib` (monorepo-aware — it uses the importing
+  file's own `src/`, not a global root).
+- Other bare/aliased specifiers (custom Vite aliases beyond `$lib`) are kept as best-effort leaf
+  nodes rather than resolved to a file.
+- `<svelte:component this={…}>` is resolved only when `this` is a plain imported identifier; dynamic
+  expressions (member access, conditionals) are not traced.
+
+## License
+
+MIT © James McGrath

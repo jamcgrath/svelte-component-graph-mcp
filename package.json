@@ -1,0 +1,48 @@
+{
+  "name": "svelte-component-visualizer-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing Svelte/SvelteKit component dependency graphs over stdio — the companion to the Svelte Component Visualizer VS Code extension.",
+  "type": "module",
+  "license": "MIT",
+  "author": "James McGrath",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamcgrath/svelte-component-visualizer-mcp"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "svelte",
+    "sveltekit",
+    "components",
+    "dependencies",
+    "graph",
+    "claude"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./build/server.js",
+  "bin": {
+    "svelte-component-visualizer-mcp": "./build/server.js"
+  },
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc && chmod 755 build/server.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "estree-walker": "^3.0.3",
+    "minimatch": "^9.0.9",
+    "svelte": "^5.56.4",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
