@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { getGraph, rescan } from './cache.js';
-import { walkSvelteFiles, type GraphData, type GraphNode } from './parser.js';
+import { getComponentDetail, walkSvelteFiles, type GraphData, type GraphNode } from './parser.js';
 
 const NAME = 'svelte-component-visualizer-mcp';
 const VERSION = '0.1.0';
@@ -86,7 +86,8 @@ server.registerTool(
         description:
             'Look up a single component or route by its workspace-relative path (e.g. ' +
             '"src/lib/Button.svelte"). Returns its parents (components that import it), children ' +
-            '(components it imports), whether it is unused, and whether it is a route.',
+            '(components it imports), whether it is unused/a route, and its public API surface: ' +
+            'props (name, optional, bindable, rest), slots, and dispatched events.',
         inputSchema: {
             ...rootSchema,
             path: z
@@ -107,6 +108,7 @@ server.registerTool(
                     `Pass a workspace-relative path such as "src/lib/Button.svelte".`
             );
         }
+        const detail = getComponentDetail(path.join(root, ...id.split('/')), root);
         return ok({
             id: node.id,
             label: node.label,
@@ -114,7 +116,10 @@ server.registerTool(
             unused: node.unused === true,
             isRoute: node.type === 'route',
             parents: parentsOf(graph, id),
-            children: childrenOf(graph, id)
+            children: childrenOf(graph, id),
+            props: detail.props,
+            slots: detail.slots,
+            events: detail.events
         });
     }
 );

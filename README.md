@@ -88,19 +88,31 @@ The full graph.
 ```
 
 ### `get_component(root, path)`
-Details for one component/route. `path` is workspace-relative (`src/lib/Button.svelte`).
+Details for one component/route, including its public API surface. `path` is workspace-relative
+(`src/lib/Button.svelte`).
 
 ```jsonc
 {
-  "id": "src/lib/Button.svelte",
-  "label": "Button",
+  "id": "src/lib/Widget.svelte",
+  "label": "Widget",
   "type": "component",
   "unused": false,
   "isRoute": false,
   "parents": ["src/routes/+page.svelte"],   // components that import it
-  "children": []                             // components it imports
+  "children": [],                            // components it imports
+  "props": [                                  // $props() (runes) or `export let` (legacy)
+    { "name": "size",  "optional": true,  "bindable": false },
+    { "name": "open",  "optional": true,  "bindable": true },
+    { "name": "title", "optional": false, "bindable": false },
+    { "name": "rest",  "optional": true,  "bindable": false, "rest": true }
+  ],
+  "slots": ["default", "footer"],            // <slot> / <slot name="…">
+  "events": []                                // legacy createEventDispatcher names
 }
 ```
+
+Props cover Svelte 5 runes (`$props()`, `$bindable()`, `...rest`) and legacy `export let`. Runes
+components express events as callback props, so those appear in `props` rather than `events`.
 
 ### `get_unused(root)`
 Every component imported somewhere but never used in the importing file's template.
