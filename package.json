@@ -7,7 +7,7 @@
   "author": "James McGrath",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jamcgrath/svelte-component-visualizer-mcp"
+    "url": "git+https://github.com/jamcgrath/svelte-component-visualizer-mcp.git"
   },
   "keywords": [
     "mcp",
@@ -24,7 +24,7 @@
   },
   "main": "./build/server.js",
   "bin": {
-    "svelte-component-visualizer-mcp": "./build/server.js"
+    "svelte-component-visualizer-mcp": "build/server.js"
   },
   "files": [
     "build",
