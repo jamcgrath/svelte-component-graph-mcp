@@ -1,4 +1,4 @@
-# svelte-component-visualizer-mcp
+# svelte-component-graph-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that exposes a Svelte/SvelteKit project's
 **component dependency graph** over stdio, so an AI coding assistant can ask questions like
@@ -30,13 +30,13 @@ changed files are re-parsed).
 Run on demand with `npx` (no install):
 
 ```bash
-npx svelte-component-visualizer-mcp
+npx svelte-component-graph-mcp
 ```
 
 …or install globally:
 
 ```bash
-npm install -g svelte-component-visualizer-mcp
+npm install -g svelte-component-graph-mcp
 ```
 
 Requires Node.js ≥ 20.
@@ -48,15 +48,15 @@ Add it to your MCP config (e.g. `.mcp.json` in a project, or your user-level con
 ```json
 {
   "mcpServers": {
-    "svelte-visualizer": {
+    "svelte-graph": {
       "command": "npx",
-      "args": ["-y", "svelte-component-visualizer-mcp"]
+      "args": ["-y", "svelte-component-graph-mcp"]
     }
   }
 }
 ```
 
-If you installed globally, use `"command": "svelte-component-visualizer-mcp"` with `"args": []`.
+If you installed globally, use `"command": "svelte-component-graph-mcp"` with `"args": []`.
 
 ## The `root` argument
 

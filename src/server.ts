@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { getGraph, rescan } from './cache.js';
 import { getComponentDetail, hasSvelteFile, toNodeId, type GraphData, type GraphNode } from './parser.js';
 
-const NAME = 'svelte-component-visualizer-mcp';
+const NAME = 'svelte-component-graph-mcp';
 const VERSION = '0.1.0';
 
 // --- result helpers ------------------------------------------------------------------------------

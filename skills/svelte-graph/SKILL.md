@@ -11,7 +11,7 @@ description: >-
 
 # Svelte component graph
 
-This skill drives the **svelte-component-visualizer** MCP server, which parses a
+This skill drives the **svelte-component-graph-mcp** server, which parses a
 Svelte/SvelteKit project into a component dependency graph. Prefer these tools
 over manually grepping `import` statements — the parser already resolves
 relative + `$lib` imports, `<svelte:component this={Ident}>`, and unused
@@ -19,7 +19,7 @@ imports, and it caches per file.
 
 ## Prerequisite
 
-The `svelte-component-visualizer-mcp` server must be configured in MCP settings.
+The `svelte-component-graph-mcp` server must be configured in MCP settings.
 If its tools aren't available, tell the user to add it (see the package README)
 rather than falling back to grep.
 
