@@ -165,7 +165,9 @@ Force a full re-parse (bypassing all caches) and return the resulting size.
 - SvelteKit's `$lib/…` resolves to the nearest `src/lib` (monorepo-aware — it uses the importing
   file's own `src/`, not a global root).
 - Other bare/aliased specifiers (custom Vite aliases beyond `$lib`) are kept as best-effort leaf
-  nodes rather than resolved to a file.
+  nodes rather than resolved to a file. As a corollary, a bare package import like
+  `import X from 'some-pkg/Foo.svelte'` is keyed by that raw path and would merge with a local file
+  at the same relative path (`some-pkg/Foo.svelte`) if one exists — an unlikely but possible collision.
 - `<svelte:component this={…}>` is resolved only when `this` is a plain imported identifier; dynamic
   expressions (member access, conditionals) are not traced.
 - `componentPaths` / `routePaths` accept negation globs (`!**/*.stories.svelte`) to exclude files: a
