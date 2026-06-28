@@ -27,7 +27,8 @@
     "svelte-component-visualizer-mcp": "./build/server.js"
   },
   "files": [
-    "build"
+    "build",
+    "skills"
   ],
   "scripts": {
     "build": "tsc && chmod 755 build/server.js",

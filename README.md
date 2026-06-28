@@ -69,6 +69,23 @@ Guidance for the assistant when choosing `root`:
   pass `$PWD`.
 - Otherwise (e.g. a monorepo, or the cwd is a subfolder), pass the project's absolute path explicitly.
 
+## Companion skill (optional)
+
+A Claude Code skill ships in [`skills/svelte-graph/`](skills/svelte-graph/SKILL.md). It teaches the
+assistant *when* to reach for these tools (impact analysis, dead-code hunts, prop lookups) and how to
+resolve `root`. The MCP tools work without it; the skill just improves how readily they're used.
+
+To install it, copy the folder into a skills directory:
+
+```bash
+# project-level (this repo/project only)
+cp -r skills/svelte-graph .claude/skills/svelte-graph
+# or user-level (all your projects)
+cp -r skills/svelte-graph ~/.claude/skills/svelte-graph
+```
+
+Then invoke it with `/svelte-graph`, or let the assistant trigger it automatically.
+
 ## Tools
 
 ### `get_graph(root)`
